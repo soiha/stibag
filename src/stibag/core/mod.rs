@@ -1,6 +1,7 @@
 ﻿use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use bevy::log::info;
+use koto::Koto;
 use crate::stibag;
 
 type ItemId = u32;
@@ -146,6 +147,7 @@ impl ItemContainer {
 }
 
 pub struct World {
+    koto_env: Koto,
     player_interface: PlayerInterface,
     map: stibag::map::Map,
     current_timeslice: u64,
@@ -159,6 +161,7 @@ pub struct World {
 impl World {
     pub fn init() -> Self {
         let w = World {
+            koto_env: Koto::default(),
             player_interface: PlayerInterface {
                 possessed_actor: 0,
             },
