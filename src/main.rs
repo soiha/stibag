@@ -1,6 +1,5 @@
 use crate::stibag::StibagGamePlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
-use bevy_rand::prelude::EntropyPlugin;
 use bevy::app::App;
 use bevy::DefaultPlugins;
 use bevy::prelude::PluginGroup;
