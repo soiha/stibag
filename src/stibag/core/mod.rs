@@ -40,7 +40,7 @@ pub trait Item {
     fn container(&self) -> Option<&ItemContainer>;
 }
 
-trait WorldActor {
+pub trait WorldActor {
     fn actor_id(&self) -> ActorId;
     
     fn on_spawn(&self, world: &mut World);
@@ -93,9 +93,10 @@ struct HumanoidActor {
     
 }
 
-struct PlayerInterface {
+pub struct PlayerInterface {
     possessed_actor: ActorId,
 }
+
 
 impl WorldActor for HumanoidActor {
     fn actor_id(&self) -> ActorId {
@@ -115,7 +116,7 @@ impl WorldActor for HumanoidActor {
 
 pub struct ItemContainer {
     id: ItemId,
-    contents: Vec<Box<dyn Item>>,
+    contents: Vec<Box<dyn Item + Send + Sync>>,
 }
 
 impl ItemContainer {
@@ -126,11 +127,11 @@ impl ItemContainer {
         }
     }
     
-    pub fn can_contain(&self, item: &Box<dyn Item>) -> bool {
+    pub fn can_contain(&self, item: &Box<dyn Item + Send + Sync>) -> bool {
         true
     }
     
-    pub fn add_item(&mut self, mut item: Box<dyn Item>) {
+    pub fn add_item(&mut self, mut item: Box<dyn Item + Send + Sync>) {
         if self.can_contain(&item) {
             item.set_parent_container(self.id);
             self.contents.push(item);
@@ -141,30 +142,30 @@ impl ItemContainer {
         self.contents.retain(|item| item.id() != item_id);
     }
     
-    pub fn get_item(&self, item_id: ItemId) -> Option<&Box<dyn Item>> {
+    pub fn get_item(&self, item_id: ItemId) -> Option<&Box<dyn Item + Send + Sync>> {
         self.contents.iter().find(|item| item.id() == item_id)
     }
 }
 
 pub struct World {
-    koto_env: Koto,
-    player_interface: PlayerInterface,
-    map: stibag::map::Map,
-    current_timeslice: u64,
+    pub koto_env: Koto,
+    pub player_interface: PlayerInterface,
+    pub map: stibag::map::Map,
+    pub current_timeslice: u64,
     actor_id_count: u64,
     item_id_count: u64,
-    timeline: Arc<Mutex<Vec<(u64, ActorId)>>>,
-    actors: Arc<Mutex<HashMap<ActorId, Box<dyn WorldActor>>>>,
-    items: Arc<Mutex<HashMap<ItemId, Box<dyn Item>>>>,
+    pub timeline: Arc<Mutex<Vec<(u64, ActorId)>>>,
+    pub actors: Arc<Mutex<HashMap<ActorId, Box<dyn WorldActor + Send + Sync>>>>,
+    pub items: Arc<Mutex<HashMap<ItemId, Box<dyn Item + Send + Sync>>>>,
 }
 
 impl World {
     pub fn init() -> Self {
         let w = World {
-            koto_env: Koto::default(),
             player_interface: PlayerInterface {
                 possessed_actor: 0,
             },
+            koto_env: Koto::default(),
             map: stibag::map::Map::new_from_template("default".to_string(), bevy::math::IVec2::new(100, 100)),
             current_timeslice: 0,
             actor_id_count: 1,
