@@ -1,6 +1,8 @@
 ﻿use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use bevy::a11y::accesskit::Vec2;
 use bevy::log::info;
+use bevy::math::IVec2;
 use koto::Koto;
 use crate::stibag;
 
@@ -161,7 +163,7 @@ pub struct World {
 
 impl World {
     pub fn init() -> Self {
-        let w = World {
+        let mut w = World {
             player_interface: PlayerInterface {
                 possessed_actor: 0,
             },
@@ -174,6 +176,23 @@ impl World {
             actors: Arc::new(Mutex::new(HashMap::new())),
             items: Arc::new(Mutex::new(HashMap::new())),
         };
+        w.map.blit_tiles_from_charmap(IVec2::new(20, 20), vec![
+            "########".into(),
+            "#......#".into(),
+            ".......#".into(),
+            "#......#".into(),
+            "#######.".into(),
+        ], |c| match c {
+            '#' => Some(stibag::map::MapTile {
+                tile_type: "wall".to_string(),
+                tile_visual: "wall".to_string(),
+                position: bevy::math::IVec2::new(0, 0),
+                contained_items: ItemContainer::new(),
+                transparency: stibag::map::Transparency::Opaque,
+                traversal_cost: 1.0,
+            }),
+            _ => None
+        });
         info!("World initialized!");
         w
     }

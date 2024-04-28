@@ -12,26 +12,42 @@ pub enum WrapMode {
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum Transparency {
+pub enum Transparency {
     Opaque,
     Transparent,
 }
 
+
 pub struct MapTile {
-    tile_type: TileTypeId,
-    tile_visual: TileVisualId,
-    position: IVec2,
-    contained_items: ItemContainer,
-    transparency: Transparency,
-    traversal_cost: f32,
+    pub tile_type: TileTypeId,
+    pub tile_visual: TileVisualId,
+    pub position: IVec2,
+    pub contained_items: ItemContainer,
+    pub transparency: Transparency,
+    pub traversal_cost: f32,
+}
+
+impl MapTile {
+    pub fn get_color(&self) -> bevy::render::color::Color {
+        if self.position.x == 0 && self.position.y == 0 {
+            return bevy::render::color::Color::rgb(1.0, 0.0, 0.0);
+        }
+        match self.tile_visual.as_str() {
+            "grass" => bevy::render::color::Color::rgb(0.0, 1.0, 0.0),
+            "wall" => bevy::render::color::Color::rgb(0.5, 0.5, 0.5),
+            "water" => bevy::render::color::Color::rgb(1.0, 0.0, 1.0),
+            "sand" => bevy::render::color::Color::rgb(1.0, 1.0, 0.0),
+            _ => bevy::render::color::Color::rgb(1.0, 1.0, 1.0),
+        }
+    }
 }
 
 pub struct Map {
-    tiles: Vec<MapTile>,
-    width: u32,
-    height: u32,
-    horizontal_wrap: WrapMode,
-    vertical_wrap: WrapMode,
+    pub tiles: Vec<MapTile>,
+    pub width: u32,
+    pub height: u32,
+    pub horizontal_wrap: WrapMode,
+    pub vertical_wrap: WrapMode,
 }
 
 impl Map {
@@ -58,11 +74,19 @@ impl Map {
         }
     }
 
-    pub fn place_tile_at(&mut self, position: IVec2, tile: MapTile) {
+    pub fn blit_tile_at(&mut self, position: IVec2, mut tile: MapTile) {
         assert!(position.x < self.width as i32);
         assert!(position.y < self.height as i32);
+        tile.position = position;
         
-        self.tiles[(position.y * (self.width as i32) + position.x) as usize] = tile;
+        let mut t: &mut MapTile = self.get_tile_at_mut(position);
+        t.tile_type = tile.tile_type.clone();
+        t.tile_visual = tile.tile_visual.clone();
+    }
+    
+    pub fn get_tile_at_mut(&mut self, position: IVec2) -> &mut MapTile {
+        let t = &mut self.tiles[(position.y * (self.width as i32) + position.x) as usize];
+        t
     }
     
     pub fn get_tile_at(&self, position: IVec2) -> Option<&MapTile> {
@@ -94,7 +118,7 @@ impl Map {
                 WrapMode::Mirror => return self.get_tile_at(IVec2::new(position.x, -position.y % self.height as i32)),
             }
         }
-        let t= &self.tiles[(position.y * (self.width as i32) + position.x) as usize];
+        let  t= &self.tiles[(position.y * (self.width as i32) + position.x) as usize];
         Some(t)
     }
     
@@ -139,9 +163,10 @@ impl Map {
     
     pub fn blit_tiles_from_charmap(&mut self, top_left_pos: IVec2, charmap: Vec<String>, char_mapper_func: fn(char) -> Option<MapTile>) {
         for (y, row) in charmap.iter().enumerate() {
+            println!("{}", row);
             for (x, c) in row.chars().enumerate() {
                 if let Some(tile) = char_mapper_func(c) {
-                    self.place_tile_at(IVec2::new(top_left_pos.x + x as i32, top_left_pos.y + y as i32), tile);
+                    self.blit_tile_at(IVec2::new(top_left_pos.x + x as i32, top_left_pos.y + y as i32), tile);
                 }
             }
         }
