@@ -813,7 +813,7 @@ checksum = "834276ae2204268fc26aa43cdc7b53b4432520975fc090dc8b6d711e52da268c"
 dependencies = [
  "bevy 0.12.1",
  "bevy_ecs_ldtk_macros",
- "bevy_ecs_tilemap",
+ "bevy_ecs_tilemap 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "derive-getters",
  "derive_more",
  "hex",
@@ -867,6 +867,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "767e622c07330b7581b109f232690ae5ccf18a91aa6b01d19beaeb20ddf797bc"
 dependencies = [
  "bevy 0.12.1",
+ "log",
+ "regex",
+]
+
+[[package]]
+name = "bevy_ecs_tilemap"
+version = "0.12.0"
+source = "git+https://github.com/StarArawn/bevy_ecs_tilemap.git#25def41e029626bb5e84fe7aca1f16a1d6beccdc"
+dependencies = [
+ "bevy 0.13.2",
  "log",
  "regex",
 ]
@@ -4723,6 +4733,7 @@ dependencies = [
  "bevy 0.13.2",
  "bevy-inspector-egui",
  "bevy_ecs_ldtk",
+ "bevy_ecs_tilemap 0.12.0 (git+https://github.com/StarArawn/bevy_ecs_tilemap.git)",
  "bevy_prng",
  "bevy_rand",
  "koto",

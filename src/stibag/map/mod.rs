@@ -1,4 +1,5 @@
 use bevy::math::IVec2;
+use bevy_ecs_tilemap::prelude::TileTextureIndex;
 use bevy_inspector_egui::egui::SizeHint::Width;
 use crate::stibag::core::ItemContainer;
 
@@ -40,6 +41,17 @@ impl MapTile {
             traversal_cost: self.traversal_cost,
         }
     }
+
+    pub fn get_texture_index(&self) -> TileTextureIndex {
+        match self.tile_visual.as_str() {
+            "grass" => TileTextureIndex(5),
+            "wall" => TileTextureIndex(32 * 2 + 15),
+            "water" => TileTextureIndex(3),
+            "sand" => TileTextureIndex(7),
+            _ => TileTextureIndex(8 * 32 + 32),
+        }
+    }
+
     pub fn get_color(&self) -> bevy::render::color::Color {
         if self.position.x == 0 && self.position.y == 0 {
             return bevy::render::color::Color::rgb(1.0, 0.0, 0.0);
