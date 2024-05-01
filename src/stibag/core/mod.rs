@@ -4,6 +4,7 @@ use bevy::a11y::accesskit::Vec2;
 use bevy::log::info;
 use bevy::math::IVec2;
 use koto::Koto;
+use koto::parser::Position;
 use crate::stibag;
 
 type ItemId = u32;
@@ -45,8 +46,18 @@ pub trait Item {
 pub trait WorldActor {
     fn actor_id(&self) -> ActorId;
 
+    fn info(&mut self) -> &mut ActorInfo;
+
+    fn position(&mut self) -> IVec2 {
+        self.info().position.clone()
+    }
+
     fn on_spawn(&self, world: &mut World);
     fn act(&self, world: &mut World) -> u64;
+
+    fn move_to(&mut self, new_position: IVec2) {
+        self.info().position = new_position;
+    }
 }
 
 struct BasicItem {
@@ -87,20 +98,37 @@ impl Item for BasicItem {
     }
 }
 
+struct ActorInfo {
+    pub position: IVec2,
+}
+
+impl ActorInfo {
+    pub fn new() -> Self {
+        ActorInfo {
+            position: IVec2::new(0, 0),
+        }
+    }
+}
+
 struct HumanoidActor {
     pub actor_id: ActorId,
+    pub info: ActorInfo,
     pub inventory: ItemContainer,
 
 }
 
 pub struct PlayerInterface {
-    possessed_actor: ActorId,
+    pub possessed_actor: ActorId,
 }
 
 
 impl WorldActor for HumanoidActor {
     fn actor_id(&self) -> ActorId {
         self.actor_id
+    }
+
+    fn info(&mut self) -> &mut ActorInfo {
+        &mut self.info
     }
 
     fn on_spawn(&self, world: &mut World) {
@@ -187,7 +215,7 @@ impl World {
                 position: bevy::math::IVec2::new(0, 0),
                 contained_items: ItemContainer::new(),
                 transparency: stibag::map::Transparency::Opaque,
-                traversal_cost: 1.0,
+                traversal_cost: -1.0,
             }),
             _ => None
         });
@@ -201,6 +229,7 @@ impl World {
         self.actor_id_count += 1;
         let newactor = Box::new(HumanoidActor {
             actor_id: actor_id.try_into().unwrap(),
+            info: ActorInfo::new(),
             inventory: ItemContainer::new(),
         });
         newactor.on_spawn(self);
@@ -257,6 +286,46 @@ impl World {
     pub fn player_possess_actor(&mut self, actor_id: ActorId) {
         self.player_interface.possessed_actor = actor_id;
         info!("Player possessed actor {}", actor_id);
+    }
+
+    pub fn get_possessed_actor_pos(&self) -> IVec2 {
+        self.get_actor_pos(self.player_interface.possessed_actor)
+    }
+
+    pub fn get_actor_pos(&self, actor_id: ActorId) -> IVec2 {
+        let ac = self.actors.clone();
+        let mut map = ac.lock().unwrap();
+        let actor = map.get_mut(&actor_id).unwrap();
+        let ret = actor.position().clone();
+        drop(map);
+        ret
+    }
+    pub fn try_move_actor_to(&mut self, actor_id: ActorId, new_position: IVec2) -> bool {
+        let mut ac = self.actors.clone();
+        let mut map = ac.lock().unwrap();
+        let actor = map.get_mut(&actor_id).unwrap();
+        let tile = self.map.get_tile_at(new_position);
+        if let Some(t) = tile {
+            if t.traversal_cost > 0.0 {
+                actor.move_to(new_position);
+                drop(map);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+
+    pub fn try_move_actor_by(&mut self, actor_id: ActorId, delta: IVec2) -> bool {
+        let mut ac = self.actors.clone();
+        let mut map = ac.lock().unwrap();
+        let actor = map.get_mut(&actor_id).unwrap();
+        let apos = actor.position().clone();
+        drop(map);
+        let new_position = apos + delta;
+        self.try_move_actor_to(actor_id, new_position)
     }
 
     pub fn tick(&mut self) -> bool {

@@ -8,7 +8,9 @@ use bevy::app::App;
 use bevy::math::vec3;
 use bevy::prelude::*;
 use bevy::reflect::ReflectKind::Map;
+use bevy::render::render_resource::BindingType::Texture;
 use bevy::sprite::MaterialMesh2dBundle;
+use bevy::utils::petgraph::visit::Walker;
 use bevy_ecs_tilemap::prelude::*;
 use stopwatch::Stopwatch;
 
@@ -61,8 +63,13 @@ fn tile_coords_to_world_coords(tile_pos: IVec2) -> Vec2 {
 
 fn plugin_init(mut commands: Commands, mut materials: ResMut<Assets<ColorMaterial>>, asset_server: Res<AssetServer>,
                st_world: Res<StibagWorldRes>, mut meshes: ResMut<Assets<Mesh>>, mut stibagres: ResMut<StibagRes>,
+               mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
                // array_texture_loader?
 ) {
+    let tiles_tex_handle = asset_server.load("u5_tiles.png");
+    let tex_layout = TextureAtlasLayout::from_grid(Vec2::new(32.0, 32.0), 32, 16, None, None);
+    let sprite_layout = texture_atlas_layouts.add(tex_layout);
+
     stibagres.rect_mesh = Some(meshes.add(Rectangle::new(1.0, 1.0)));
     commands.spawn((
         Camera2dBundle {
@@ -71,46 +78,24 @@ fn plugin_init(mut commands: Commands, mut materials: ResMut<Assets<ColorMateria
         }, CameraMarker {},
     ));
 
-    let BLACK = materials.add(Color::rgb(0.0, 0.0, 0.0));
-    stibagres.BLACK = BLACK;
 
     let base_offset = vec3(-00.0, -0.0, 0.0);
-    /*
-   
-    for x in 0..st_world.world.map.width {
-        for y in 0..st_world.world.map.height {
-            let mut transform = Transform::from_translation(base_offset + Vec3::new(x as f32 * TILE_SIZE, y as f32 * TILE_SIZE, 1.0));
-            let tile = st_world.world.map.get_tile_at(IVec2::new(x as i32, y as i32)).unwrap();
-
-            transform.scale = Vec3::new(TILE_SIZE - 1.0, TILE_SIZE - 1.0, 1.0);
-            let mesh = stibagres.rect_mesh.clone().unwrap();
-            commands.spawn((MaterialMesh2dBundle {
-                mesh: bevy::sprite::Mesh2dHandle(mesh),
-                material: materials.add(Color::WHITE),
-                transform: transform,
-                ..default()
-            }, MapTile {
-                map_position: IVec2::new(x as i32, y as i32),
-                color: tile.get_color(),
-                in_vision: false,
-                is_seen: false,
-            }));
-
-            // commands.entity(plr.id()).insert(PlayerMarker { });
-        }
-    }
-    
-     */
-    let mut player_trans = Transform::from_translation(base_offset + Vec3::new(10.0, 10.0, 5.0));
-    player_trans.scale = Vec3::new(5.0, 5.0, 1.0);
-    let plr = commands.spawn((MaterialMesh2dBundle {
-        mesh: bevy::sprite::Mesh2dHandle(stibagres.rect_mesh.clone().unwrap()),
-        material: materials.add(Color::rgb(0.0, 0.6, 1.0)),
+    let mut player_trans = Transform::from_translation(base_offset + Vec3::new(-1600.0, -1600.0, 5.0));
+    player_trans.scale = Vec3::new(1.0, 1.0, 1.0);
+    let plr = commands.spawn((SpriteSheetBundle {
+        sprite: Default::default(),
         transform: player_trans,
-        ..default()
+        global_transform: Default::default(),
+        texture: tiles_tex_handle.clone(),
+        atlas: TextureAtlas {
+            layout: sprite_layout,
+            index: 10 * 32 + 14,
+        },
+        visibility: Default::default(),
+        inherited_visibility: Default::default(),
+        view_visibility: Default::default(),
     }, PlayerMarker {}));
 
-    let texture_handle = asset_server.load("u5_tiles.png");
     let tile_size = TilemapTileSize { x: 16.0, y: 16.0 };
 
 
@@ -141,7 +126,7 @@ fn plugin_init(mut commands: Commands, mut materials: ResMut<Assets<ColorMateria
         map_type,
         size: tmap_size,
         storage: tile_storage,
-        texture: TilemapTexture::Single(texture_handle),
+        texture: TilemapTexture::Single(tiles_tex_handle),
         tile_size,
         transform: get_tilemap_center_transform(&tmap_size, &grid_size, &map_type, 0.0),
         ..Default::default()
@@ -150,30 +135,53 @@ fn plugin_init(mut commands: Commands, mut materials: ResMut<Assets<ColorMateria
     info!("Stibag plugin init");
 }
 
+fn entity_sprite_position_sys(mut query: Query<(&mut Transform, ), With<PlayerMarker>>,
+                              mut tilemap_q: ParamSet<(Query<(&Transform, &TilemapType, &TilemapGridSize, &TileStorage), (With<TileStorage>, Without<PlayerMarker>, Without<CameraMarker>)>, )>,
+                              mut st_world: ResMut<StibagWorldRes>) {
+    let tmq = tilemap_q.p0();
+    let (map_transform, map_type, grid_size, tilemap_storage) = tmq.single();
+
+    // possessed actor
+    let plr_a = st_world.world.player_interface.possessed_actor;
+    let plr_pos = st_world.world.get_actor_pos(plr_a);
+
+    for (mut transform, ) in query.iter_mut() {
+        let tpos = TilePos { x: plr_pos.x as u32, y: plr_pos.y as u32 };
+        let world_pos = tpos.center_in_world(grid_size, map_type).extend(5.0);
+        transform.translation = map_transform.translation + world_pos;
+    }
+}
+
 fn player_movement_sys(mut plr_set: ParamSet<(Query<&mut Transform, With<PlayerMarker>>, )>,
-                       mut ev_movement: EventReader<PlayerMovementEvent>) {
+                       mut ev_movement: EventReader<PlayerMovementEvent>, mut st_world: ResMut<StibagWorldRes>, ) {
+    let plr_a = st_world.world.player_interface.possessed_actor;
     let mut p = plr_set.p0();
     let mut plr_transform = p.single_mut();
     let mut pos = plr_transform.translation;
     for ev in ev_movement.read() {
+        let moved = st_world.world.try_move_actor_by(plr_a, IVec2::new(ev.0.x, ev.0.y));
+        if moved {
+            info!("Player moved by {:?} now at {:?}", ev.0, st_world.world.get_actor_pos(plr_a));
+        } else {
+            info!("Player could not move by {:?}", ev.0);
+        }
+        info!("Player now at {:?}", st_world.world.get_actor_pos(plr_a));
         pos.x += ev.0.x as f32 * TILE_SIZE;
         pos.y += ev.0.y as f32 * TILE_SIZE;
-        plr_transform.translation = pos;
+        // plr_transform.translation = pos;
         // TODO geo check
     }
 }
 
 fn camera_recenter_sys(mut cam_set: ParamSet<(Query<&mut Transform, (With<CameraMarker>, Without<PlayerMarker>)>, )>,
-                       mut plr_set: ParamSet<(Query<&Transform, With<PlayerMarker>>, )>,
-                       mut tilemap_q: ParamSet<(Query<(&Transform, &TilemapType, &TilemapGridSize, &TileStorage), (With<TileStorage>, Without<PlayerMarker>, Without<CameraMarker>)>, )>, ) {
+                       mut tilemap_q: ParamSet<(Query<(&Transform, &TilemapType, &TilemapGridSize, &TileStorage), (With<TileStorage>, Without<PlayerMarker>, Without<CameraMarker>)>, )>,
+                       mut st_world: ResMut<StibagWorldRes>) {
+    let plr_a = st_world.world.player_interface.possessed_actor;
     let tmq = tilemap_q.p0();
     let (map_transform, map_type, grid_size, tilemap_storage) = tmq.single();
     let mut c = cam_set.p0();
     let mut cam_trans = c.single_mut();
-    let p = plr_set.p0();
-    let plr_trans = p.single();
-    let map_pos_v3 = (plr_trans.translation / TILE_SIZE).floor();
-    let plr_map_pos = IVec2::new(map_pos_v3.x as i32, map_pos_v3.y as i32);
+    let plr_map_pos = st_world.world.get_actor_pos(plr_a);
     let tpos = TilePos { x: plr_map_pos.x as u32, y: plr_map_pos.y as u32 };
     let t_center = tpos.center_in_world(&TilemapGridSize { x: 32.0, y: 32.0 }, map_type).extend(1.0);
     cam_trans.translation = map_transform.translation + t_center;
@@ -185,7 +193,7 @@ fn recalc_vision_sys(mut commands: Commands, stibagres: Res<StibagRes>, st_world
     let p = plr_set.p0();
     let plr_trans = p.single();
     let map_pos_v3 = (plr_trans.translation / TILE_SIZE).floor();
-    let plr_map_pos = IVec2::new(map_pos_v3.x as i32, map_pos_v3.y as i32);
+    let plr_map_pos = st_world.world.get_possessed_actor_pos();
     let sw = Stopwatch::start_new();
     let plr_vision = st_world.world.map.calc_vision(plr_map_pos, 50.0);
     // let plr_vision = vec![plr_map_pos + IVec2::new(0, 1), plr_map_pos + IVec2::new(1, 0), plr_map_pos + IVec2::new(-1, 0), plr_map_pos + IVec2::new(0, -1)];
@@ -210,11 +218,12 @@ fn recalc_vision_sys(mut commands: Commands, stibagres: Res<StibagRes>, st_world
 }
 
 fn reassign_vision_markers_sys(mut commands: Commands, st_world: Res<StibagWorldRes>, mut current_viz_query: Query<(Entity, ), With<InVisionMarker>>,
-                               mut map_tile_query: Query<(Entity, &TilePos, &mut TileColor)>, mut plr_set: ParamSet<(Query<&Transform, With<PlayerMarker>>, )>, ) {
+                               mut map_tile_query: Query<(Entity, &TilePos, &mut TileColor)>, mut plr_set: ParamSet<(Query<&Transform, With<PlayerMarker>>, )>,
+) {
     let p = plr_set.p0();
     let plr_trans = p.single();
     let map_pos_v3 = (plr_trans.translation / TILE_SIZE).floor();
-    let plr_map_pos = IVec2::new(map_pos_v3.x as i32, map_pos_v3.y as i32);
+    let plr_map_pos = st_world.world.get_possessed_actor_pos();
     let sw = Stopwatch::start_new();
     let plr_vision = st_world.world.map.calc_vision(plr_map_pos, 50.0);
     for (e, ) in current_viz_query.iter_mut() {
@@ -316,6 +325,7 @@ impl Plugin for StibagGamePlugin {
         app.add_systems(Update, gamepad_connections);
         app.add_systems(Update, gamepad_input_events);
         app.add_systems(Update, player_movement_sys);
+        app.add_systems(Update, entity_sprite_position_sys.after(player_movement_sys));
         app.add_systems(Update, camera_recenter_sys);
         app.add_systems(Update, reassign_vision_markers_sys.after(player_movement_sys));
         app.add_systems(Update, set_material_colors_sys.after(reassign_vision_markers_sys));
