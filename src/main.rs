@@ -1,7 +1,7 @@
 extern crate core;
 
 use crate::stibag::StibagGamePlugin;
-use bevy_inspector_egui::quick::WorldInspectorPlugin;
+// use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy::app::App;
 use bevy::DefaultPlugins;
 use bevy::prelude::PluginGroup;
@@ -18,8 +18,8 @@ fn main() {
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .add_plugins(LogDiagnosticsPlugin::default())
         .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()))
-        .add_plugins(WorldInspectorPlugin::new())
+        // .add_plugins(WorldInspectorPlugin::new())
         .add_plugins(TilemapPlugin)
-        .add_plugins((StibagGamePlugin {}))
+        .add_plugins((StibagGamePlugin {}, ))
         .run();
 }

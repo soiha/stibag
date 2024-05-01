@@ -1,11 +1,14 @@
+use crate::stibag::core::{ActorId, LightId};
 use bevy::math::IVec2;
+use bevy::prelude::Color;
 use bevy_ecs_tilemap::prelude::TileTextureIndex;
-use bevy_inspector_egui::egui::SizeHint::Width;
 use crate::stibag::core::ItemContainer;
 
 type TileTypeId = String;
 type TileVisualId = String;
 
+
+#[allow(dead_code)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum WrapMode {
     Clamp,
@@ -13,20 +16,63 @@ pub enum WrapMode {
     Mirror,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
 pub enum Transparency {
+    #[default]
     Opaque,
     Transparent,
 }
 
+#[derive(Debug, Default)]
+pub enum LightContributionType {
+    #[default]
+    Ambient,
+    Emitter(LightId),
+}
+
+#[derive(Debug, Default)]
+pub struct LightContribution {
+    pub light_contribution_type: LightContributionType,
+    pub color: Color,
+    pub intensity: f32,
+}
+
+impl LightContribution {
+    pub fn new_ambient(color: Color, intensity: f32) -> Self {
+        LightContribution {
+            light_contribution_type: LightContributionType::Ambient,
+            color,
+            intensity,
+        }
+    }
+
+    pub fn new_emitter(light_id: LightId, color: Color, intensity: f32) -> Self {
+        LightContribution {
+            light_contribution_type: LightContributionType::Emitter(light_id),
+            color,
+            intensity,
+        }
+    }
+}
+
+pub struct LightEmitter {
+    pub light_id: LightId,
+    pub parent_actor: Option<ActorId>,
+    pub position: IVec2,
+    pub color: Color,
+    pub intensity: f32,
+}
 
 pub struct MapTile {
     pub tile_type: TileTypeId,
     pub tile_visual: TileVisualId,
+    pub light_color: Color,
+    pub light_amount: f32,
     pub position: IVec2,
     pub contained_items: ItemContainer,
     pub transparency: Transparency,
     pub traversal_cost: f32,
+    pub lighting: Vec<LightContribution>,
 }
 
 
@@ -39,6 +85,9 @@ impl MapTile {
             contained_items: ItemContainer::new(),
             transparency: self.transparency,
             traversal_cost: self.traversal_cost,
+            light_color: self.light_color.clone(), // the combined color of lights that have contributed to this tile
+            light_amount: self.light_amount,
+            lighting: Vec::new(), // all light contributions to this tile
         }
     }
 
@@ -93,8 +142,8 @@ struct FOVCalc<'a> {
 }
 
 impl<'a> FOVCalc<'a> {
-    pub fn startNew(startx: i32, starty: i32, radius: f32, map_width: usize, map_height: usize,
-                    map_query: &'a dyn FOVQuery) -> Self {
+    pub fn start_new(startx: i32, starty: i32, radius: f32, map_width: usize, map_height: usize,
+                     map_query: &'a dyn FOVQuery) -> Self {
         FOVCalc {
             startx,
             starty,
@@ -178,14 +227,17 @@ pub struct Map {
 }
 
 impl Map {
-    pub fn new_from_template(template: impl Into<String>, dimensions: IVec2) -> Self {
+    pub fn new_from_template(_template: impl Into<String>, dimensions: IVec2) -> Self {
         let new_t = MapTile {
             tile_type: "grass".to_string(),
             tile_visual: "grass".to_string(),
             position: IVec2::new(0, 0),
             contained_items: ItemContainer::new(),
             transparency: Transparency::Transparent,
+            light_amount: 0.0,
+            light_color: Color::BLACK,
             traversal_cost: 1.0,
+            lighting: Vec::new(),
         };
         let mut tiles = Vec::with_capacity((dimensions.x * dimensions.y) as usize);
         for y in 0..dimensions.y {
@@ -209,8 +261,8 @@ impl Map {
         assert!(position.y < self.height as i32);
         tile.position = position;
 
-        let mut t: &mut MapTile = self.get_tile_at_mut(position);
-        assert!(t.position == position, "Tile position mismatch: wanted {} got {}", position, t.position);
+        let t: &mut MapTile = self.get_tile_at_mut(position);
+        assert_eq!(t.position, position, "Tile position mismatch: wanted {} got {}", position, t.position);
         t.tile_type = tile.tile_type.clone();
         t.tile_visual = tile.tile_visual.clone();
         t.transparency = tile.transparency;
@@ -256,16 +308,16 @@ impl Map {
         Some(t)
     }
 
+    #[allow(dead_code)]
     #[allow(non_snake_case)]
-    pub fn line_trace(&self, from: IVec2, to: IVec2, filter_func: fn(IVec2, &MapTile) -> bool) -> Vec<IVec2> {
+    pub fn line_trace(&self, from: IVec2, to: IVec2, filter_func: fn(&Self, IVec2, &MapTile) -> bool) -> Vec<IVec2> {
         let mut result = Vec::new();
-        let mut x = from.x;
         let mut y = from.y;
         let dx = (to.x - from.x).abs();
         let dy = (to.y - from.y).abs();
         let mut D = 2 * (dy - dx);
-        for x in from.x..to.x {
-            if filter_func(IVec2::new(x, y), self.get_tile_at(IVec2::new(x, y)).unwrap()) {
+        for x in from.x..=to.x {
+            if filter_func(self, IVec2::new(x, y), self.get_tile_at(IVec2::new(x, y)).unwrap()) {
                 result.push(IVec2::new(x, y));
                 if D > 0 {
                     y += 1;
@@ -277,9 +329,9 @@ impl Map {
         result
     }
 
+    #[allow(dead_code)]
     pub fn can_see(&self, from: IVec2, to: IVec2) -> bool {
-        let mut result = true;
-        let line = self.line_trace(from, to, |pos, tile| {
+        let line = self.line_trace(from, to, |_world, _pos, tile| {
             if tile.transparency == Transparency::Opaque {
                 return false;
             }
@@ -308,7 +360,7 @@ impl Map {
 
 
     pub fn calc_vision(&self, from: IVec2, vis_radius: f32) -> Vec<IVec2> {
-        let mut fov = FOVCalc::startNew(from.x, from.y, vis_radius, self.width as usize, self.height as usize, self);
+        let mut fov = FOVCalc::start_new(from.x, from.y, vis_radius, self.width as usize, self.height as usize, self);
         fov.calculate();
         fov.results
     }
