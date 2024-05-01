@@ -6,7 +6,9 @@ use bevy::input::gamepad::GamepadEvent;
 use bevy::app::App;
 use bevy::math::vec3;
 use bevy::prelude::*;
+use bevy::reflect::ReflectKind::Map;
 use bevy::sprite::MaterialMesh2dBundle;
+use stopwatch::Stopwatch;
 
 const TILE_SIZE: f32 = 10.0;
 
@@ -17,8 +19,20 @@ pub struct StibagWorldRes {
 
 #[derive(Resource)]
 pub struct StibagRes {
+    BLACK: Handle<ColorMaterial>,
     rect_mesh: Option<Handle<Mesh>>,
 }
+
+#[derive(Reflect, Component)]
+pub struct MapTile {
+    pub map_position: IVec2,
+    pub color: Color,
+    pub in_vision: bool,
+    pub is_seen: bool,
+}
+
+#[derive(Component)]
+pub struct InVisionMarker;
 
 #[derive(Component)]
 pub struct PlayerMarker;
@@ -52,6 +66,9 @@ fn plugin_init(mut commands: Commands, mut materials: ResMut<Assets<ColorMateria
         }, CameraMarker {},
     ));
 
+    let BLACK = materials.add(Color::rgb(0.0, 0.0, 0.0));
+    stibagres.BLACK = BLACK;
+
     let base_offset = vec3(-00.0, -0.0, 0.0);
     for x in 0..st_world.world.map.width {
         for y in 0..st_world.world.map.height {
@@ -59,12 +76,17 @@ fn plugin_init(mut commands: Commands, mut materials: ResMut<Assets<ColorMateria
             let tile = st_world.world.map.get_tile_at(IVec2::new(x as i32, y as i32)).unwrap();
 
             transform.scale = Vec3::new(TILE_SIZE - 1.0, TILE_SIZE - 1.0, 1.0);
-            commands.spawn(MaterialMesh2dBundle {
+            commands.spawn((MaterialMesh2dBundle {
                 mesh: bevy::sprite::Mesh2dHandle(stibagres.rect_mesh.clone().unwrap()),
-                material: materials.add(tile.get_color()),
+                material: materials.add(Color::WHITE),
                 transform: transform,
                 ..default()
-            }, );
+            }, MapTile {
+                map_position: IVec2::new(x as i32, y as i32),
+                color: tile.get_color(),
+                in_vision: false,
+                is_seen: false,
+            }));
 
             // commands.entity(plr.id()).insert(PlayerMarker { });
         }
@@ -103,6 +125,35 @@ fn camera_recenter_sys(mut cam_set: ParamSet<(Query<&mut Transform, (With<Camera
     let plr_trans = p.single();
 
     cam_trans.translation = plr_trans.translation;
+}
+
+fn recalc_vision_sys(mut commands: Commands, stibagres: Res<StibagRes>, st_world: Res<StibagWorldRes>, mut materials: ResMut<Assets<ColorMaterial>>, mut query: Query<(Entity, &mut MapTile, &mut Handle<ColorMaterial>)>,
+                     mut plr_set: ParamSet<(Query<&Transform, With<PlayerMarker>>, )>) {
+    let p = plr_set.p0();
+    let plr_trans = p.single();
+    let map_pos_v3 = (plr_trans.translation / TILE_SIZE).floor();
+    let plr_map_pos = IVec2::new(map_pos_v3.x as i32, map_pos_v3.y as i32);
+    let sw = Stopwatch::start_new();
+    let plr_vision = st_world.world.map.calc_vision(plr_map_pos, 50.0);
+    // let plr_vision = vec![plr_map_pos + IVec2::new(0, 1), plr_map_pos + IVec2::new(1, 0), plr_map_pos + IVec2::new(-1, 0), plr_map_pos + IVec2::new(0, -1)];
+
+    for (mut e, mut tile, c_mat) in query.iter_mut() {
+        let wt = st_world.world.map.get_tile_at(tile.map_position).unwrap();
+        let color_mat = materials.get_mut(c_mat.as_ref()).unwrap();
+        if plr_vision.contains(&tile.map_position) {
+            tile.in_vision = true;
+            tile.is_seen = true;
+            commands.entity(e).insert(InVisionMarker);
+        } else {
+            tile.in_vision = false;
+        }
+        color_mat.color = if tile.in_vision {
+            wt.get_color()
+        } else {
+            Color::BLACK
+        }
+    }
+    println!("Vision recalc from {} in {} ms vision has {} entries", plr_map_pos, sw.elapsed_ms(), plr_vision.len());
 }
 
 fn gamepad_input_events(mut commands: Commands, stibag_gamepad: Option<Res<StibagGamepad>>, mut gamepad_evr: EventReader<GamepadEvent>, mut ev_movement: EventWriter<PlayerMovementEvent>) {
@@ -168,10 +219,12 @@ impl Plugin for StibagGamePlugin {
         let p_actor = world.spawn_actor_from_template("player".to_string());
         world.player_possess_actor(p_actor);
         world.tick();
+        app.register_type::<MapTile>();
         app.insert_resource(StibagWorldRes {
             world,
         });
         app.insert_resource(StibagRes {
+            BLACK: Handle::default(),
             rect_mesh: None,
         });
         app.add_event::<PlayerMovementEvent>();
@@ -180,5 +233,6 @@ impl Plugin for StibagGamePlugin {
         app.add_systems(Update, gamepad_input_events);
         app.add_systems(Update, player_movement_sys);
         app.add_systems(Update, camera_recenter_sys);
+        app.add_systems(Update, recalc_vision_sys.after(player_movement_sys));
     }
 }

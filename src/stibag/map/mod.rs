@@ -1,4 +1,5 @@
 use bevy::math::IVec2;
+use bevy_inspector_egui::egui::SizeHint::Width;
 use crate::stibag::core::ItemContainer;
 
 type TileTypeId = String;
@@ -27,7 +28,18 @@ pub struct MapTile {
     pub traversal_cost: f32,
 }
 
+
 impl MapTile {
+    pub fn clone_without_inventory(&self) -> Self {
+        MapTile {
+            tile_type: "grass".to_string(),
+            tile_visual: "grass".to_string(),
+            position: IVec2::new(0, 0),
+            contained_items: ItemContainer::new(),
+            transparency: self.transparency,
+            traversal_cost: self.traversal_cost,
+        }
+    }
     pub fn get_color(&self) -> bevy::render::color::Color {
         if self.position.x == 0 && self.position.y == 0 {
             return bevy::render::color::Color::rgb(1.0, 0.0, 0.0);
@@ -42,6 +54,109 @@ impl MapTile {
     }
 }
 
+trait FOVQuery {
+    fn is_blocked(&self, x: i32, y: i32) -> bool;
+    fn radius(&self, x: f32, y: f32) -> f32;
+}
+
+impl FOVQuery for Map {
+    fn is_blocked(&self, x: i32, y: i32) -> bool {
+        let tile = self.get_tile_at(IVec2::new(x, y)).unwrap();
+        tile.transparency == Transparency::Opaque
+    }
+
+    fn radius(&self, x: f32, y: f32) -> f32 {
+        (x * x + y * y).sqrt()
+    }
+}
+
+struct FOVCalc<'a> {
+    pub startx: i32,
+    pub starty: i32,
+    pub width: usize,
+    pub height: usize,
+    pub radius: f32,
+    pub map_query: &'a dyn FOVQuery,
+    pub results: Vec<IVec2>,
+}
+
+impl<'a> FOVCalc<'a> {
+    pub fn startNew(startx: i32, starty: i32, radius: f32, map_width: usize, map_height: usize,
+                    map_query: &'a dyn FOVQuery) -> Self {
+        FOVCalc {
+            startx,
+            starty,
+            width: map_width,
+            height: map_height,
+            radius,
+            map_query,
+            results: Vec::new(),
+        }
+    }
+
+    pub fn calculate(&mut self) {
+        self.results = Vec::new();
+        let diagonals: [IVec2; 4] = [
+            IVec2::new(-1, -1),
+            IVec2::new(-1, 1),
+            IVec2::new(1, -1),
+            IVec2::new(1, 1),
+        ];
+        self.results.push(IVec2::new(self.startx, self.starty));
+        for d in diagonals {
+            self.castlight(1, 1.0, 0.0, 0, d.x, d.y, 0);
+            self.castlight(1, 1.0, 0.0, d.x, 0, 0, d.y);
+        }
+    }
+    fn castlight(&mut self, row: i32, mut start: f32, end: f32, xx: i32, xy: i32, yx: i32, yy: i32) {
+        let radius = 30;
+
+        let mut newstart: f32 = 0.0;
+        if start < end {
+            return;
+        }
+        let mut blocked = false;
+        let mut distance = row;
+        while distance <= radius && !blocked {
+            let delta_y = -distance;
+            for delta_x in -distance..=0 {
+                let current_x = self.startx + xx * delta_x + xy * delta_y;
+                let current_y = self.starty + yx * delta_x + yy * delta_y;
+                let left_slope = (delta_x as f32 - 0.5) / (delta_y as f32 + 0.5);
+                let right_slope = (delta_x as f32 + 0.5) / (delta_y as f32 - 0.5);
+
+                if !(current_x >= 0 && current_y >= 0 && current_x < self.width as i32 && current_y < self.height as i32) || start < right_slope {
+                    continue;
+                } else if end > left_slope {
+                    break;
+                }
+
+                if self.map_query.radius(delta_x as f32, delta_y as f32) <= self.radius {
+                    let pos = IVec2::new(current_x, current_y);
+                    self.results.push(pos);
+                }
+
+                if blocked {
+                    if self.map_query.is_blocked(current_x, current_y) {
+                        newstart = right_slope;
+                        continue;
+                    } else {
+                        blocked = false;
+                        start = newstart;
+                    }
+                } else {
+                    if self.map_query.is_blocked(current_x, current_y) && distance < self.radius as i32 {
+                        blocked = true;
+                        self.castlight(row + 1, start, left_slope, xx, xy, yx, yy);
+                        newstart = right_slope;
+                    }
+                }
+            }
+            distance += 1;
+        }
+    }
+}
+
 pub struct Map {
     pub tiles: Vec<MapTile>,
     pub width: u32,
@@ -52,17 +167,20 @@ pub struct Map {
 
 impl Map {
     pub fn new_from_template(template: impl Into<String>, dimensions: IVec2) -> Self {
-        let mut tiles = Vec::new();
-        for x in 0..dimensions.x {
-            for y in 0..dimensions.y {
-                tiles.push(MapTile {
-                    tile_type: "grass".to_string(),
-                    tile_visual: "grass".to_string(),
-                    position: IVec2::new(x, y),
-                    contained_items: ItemContainer::new(),
-                    transparency: Transparency::Transparent,
-                    traversal_cost: 1.0,
-                });
+        let new_t = MapTile {
+            tile_type: "grass".to_string(),
+            tile_visual: "grass".to_string(),
+            position: IVec2::new(0, 0),
+            contained_items: ItemContainer::new(),
+            transparency: Transparency::Transparent,
+            traversal_cost: 1.0,
+        };
+        let mut tiles = Vec::with_capacity((dimensions.x * dimensions.y) as usize);
+        for y in 0..dimensions.y {
+            for x in 0..dimensions.x {
+                let mut push_t = new_t.clone_without_inventory();
+                push_t.position = IVec2::new(x, y);
+                tiles.push(push_t);
             }
         }
         Map {
@@ -78,17 +196,20 @@ impl Map {
         assert!(position.x < self.width as i32);
         assert!(position.y < self.height as i32);
         tile.position = position;
-        
+
         let mut t: &mut MapTile = self.get_tile_at_mut(position);
+        assert!(t.position == position, "Tile position mismatch: wanted {} got {}", position, t.position);
         t.tile_type = tile.tile_type.clone();
         t.tile_visual = tile.tile_visual.clone();
+        t.transparency = tile.transparency;
+        t.traversal_cost = tile.traversal_cost;
     }
-    
+
     pub fn get_tile_at_mut(&mut self, position: IVec2) -> &mut MapTile {
         let t = &mut self.tiles[(position.y * (self.width as i32) + position.x) as usize];
         t
     }
-    
+
     pub fn get_tile_at(&self, position: IVec2) -> Option<&MapTile> {
         if position.x > self.width as i32 - 1 {
             match self.horizontal_wrap {
@@ -118,10 +239,11 @@ impl Map {
                 WrapMode::Mirror => return self.get_tile_at(IVec2::new(position.x, -position.y % self.height as i32)),
             }
         }
-        let  t= &self.tiles[(position.y * (self.width as i32) + position.x) as usize];
+        let t = &self.tiles[(position.y * (self.width as i32) + position.x) as usize];
+        assert!(t.position == position, "Tile position mismatch: wanted {} got {}", position, t.position);
         Some(t)
     }
-    
+
     #[allow(non_snake_case)]
     pub fn line_trace(&self, from: IVec2, to: IVec2, filter_func: fn(IVec2, &MapTile) -> bool) -> Vec<IVec2> {
         let mut result = Vec::new();
@@ -142,7 +264,7 @@ impl Map {
         }
         result
     }
-    
+
     pub fn can_see(&self, from: IVec2, to: IVec2) -> bool {
         let mut result = true;
         let line = self.line_trace(from, to, |pos, tile| {
@@ -154,13 +276,13 @@ impl Map {
         match line.last() {
             Some(last) => {
                 last == &to
-            },
+            }
             None => {
                 false
             }
         }
     }
-    
+
     pub fn blit_tiles_from_charmap(&mut self, top_left_pos: IVec2, charmap: Vec<String>, char_mapper_func: fn(char) -> Option<MapTile>) {
         for (y, row) in charmap.iter().enumerate() {
             println!("{}", row);
@@ -170,5 +292,12 @@ impl Map {
                 }
             }
         }
+    }
+
+
+    pub fn calc_vision(&self, from: IVec2, vis_radius: f32) -> Vec<IVec2> {
+        let mut fov = FOVCalc::startNew(from.x, from.y, vis_radius, self.width as usize, self.height as usize, self);
+        fov.calculate();
+        fov.results
     }
 }

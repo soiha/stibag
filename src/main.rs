@@ -1,3 +1,5 @@
+extern crate core;
+
 use crate::stibag::StibagGamePlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use bevy::app::App;

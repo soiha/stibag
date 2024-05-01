@@ -32,22 +32,21 @@ pub enum ItemSlot {
 
 pub trait Item {
     fn id(&self) -> ItemId;
-    
+
     fn set_parent_container(&mut self, container_id: ItemId);
     fn parent_container(&self) -> ItemId;
     fn slot(&self) -> ItemSlot;
     fn display_name_singular(&self) -> String;
     fn weight(&self) -> f32;
-    
+
     fn container(&self) -> Option<&ItemContainer>;
 }
 
 pub trait WorldActor {
     fn actor_id(&self) -> ActorId;
-    
+
     fn on_spawn(&self, world: &mut World);
     fn act(&self, world: &mut World) -> u64;
-    
 }
 
 struct BasicItem {
@@ -66,33 +65,32 @@ impl Item for BasicItem {
     fn set_parent_container(&mut self, container_id: ItemId) {
         self.parent_container = container_id;
     }
-    
+
     fn parent_container(&self) -> ItemId {
         self.parent_container
     }
-    
+
     fn slot(&self) -> ItemSlot {
         self.slot
     }
-    
+
     fn display_name_singular(&self) -> String {
         self.display_name.clone()
     }
-    
+
     fn weight(&self) -> f32 {
         self.weight
     }
-    
+
     fn container(&self) -> Option<&ItemContainer> {
         None
     }
-    
 }
 
 struct HumanoidActor {
     pub actor_id: ActorId,
     pub inventory: ItemContainer,
-    
+
 }
 
 pub struct PlayerInterface {
@@ -128,22 +126,22 @@ impl ItemContainer {
             contents: Vec::new(),
         }
     }
-    
+
     pub fn can_contain(&self, item: &Box<dyn Item + Send + Sync>) -> bool {
         true
     }
-    
+
     pub fn add_item(&mut self, mut item: Box<dyn Item + Send + Sync>) {
         if self.can_contain(&item) {
             item.set_parent_container(self.id);
             self.contents.push(item);
-        }   
+        }
     }
-    
+
     pub fn remove_item(&mut self, item_id: ItemId) {
         self.contents.retain(|item| item.id() != item_id);
     }
-    
+
     pub fn get_item(&self, item_id: ItemId) -> Option<&Box<dyn Item + Send + Sync>> {
         self.contents.iter().find(|item| item.id() == item_id)
     }
@@ -176,12 +174,12 @@ impl World {
             actors: Arc::new(Mutex::new(HashMap::new())),
             items: Arc::new(Mutex::new(HashMap::new())),
         };
-        w.map.blit_tiles_from_charmap(IVec2::new(20, 20), vec![
+        w.map.blit_tiles_from_charmap(IVec2::new(5, 5), vec![
             "########".into(),
             "#......#".into(),
             ".......#".into(),
             "#......#".into(),
-            "#######.".into(),
+            "########".into(),
         ], |c| match c {
             '#' => Some(stibag::map::MapTile {
                 tile_type: "wall".to_string(),
@@ -193,6 +191,7 @@ impl World {
             }),
             _ => None
         });
+        let t = w.map.get_tile_at(IVec2::new(5, 5)).unwrap();
         info!("World initialized!");
         w
     }
@@ -211,7 +210,7 @@ impl World {
         self.place_on_timeline(actor_id.try_into().unwrap(), self.current_timeslice + 1);
         actor_id.try_into().unwrap()
     }
-    
+
     pub fn spawn_item_from_template(&mut self, template: String) -> ItemId {
         let item_id = self.item_id_count;
         self.item_id_count += 1;
@@ -227,7 +226,7 @@ impl World {
         map.insert(item_id.try_into().unwrap(), newitem);
         item_id.try_into().unwrap()
     }
-    
+
     pub fn set_action_timeslice_on_timeline_for(&mut self, actor_id: ActorId, target_timeslice: u64) {
         info!("Setting action timeslice for actor {} to {}", actor_id, target_timeslice);
         let mut tl_clone = self.timeline.clone();
@@ -247,7 +246,7 @@ impl World {
         let on_timeline = self.is_on_timeline(actor_id);
         let mut tl_clone = self.timeline.clone();
         let mut tl = tl_clone.lock().unwrap();
-        
+
         if on_timeline {
             tl.retain(|(ts, aid)| aid != &actor_id);
         }
@@ -259,13 +258,13 @@ impl World {
         self.player_interface.possessed_actor = actor_id;
         info!("Player possessed actor {}", actor_id);
     }
-    
+
     pub fn tick(&mut self) -> bool {
         self.current_timeslice += 1;
         let tl_clone = self.timeline.clone();
         let tl = tl_clone.lock().unwrap();
         let next = tl.get(0);
-        
+
         let mut ret = false;
         if let Some((ts, aid)) = next.clone() {
             if ts == &self.current_timeslice {
@@ -283,7 +282,7 @@ impl World {
         }
         ret
     }
-    
+
     pub fn tick_until(&mut self, target_timeslice: u64) {
         while self.current_timeslice < target_timeslice {
             self.tick();
