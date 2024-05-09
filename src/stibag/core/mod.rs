@@ -339,10 +339,14 @@ impl World {
     pub fn get_actor_pos(&self, actor_id: ActorId) -> IVec2 {
         let ac = self.actors.clone();
         let mut map = ac.lock().unwrap();
-        let actor = map.get_mut(&actor_id).unwrap();
-        let ret = actor.position().clone();
-        drop(map);
-        ret
+        if let Some(actor) = map.get_mut(&actor_id) {
+            let ret = actor.position().clone();
+            drop(map);
+            return ret;
+        } else {
+            drop(map);
+            return IVec2::new(0, 0);
+        }
     }
     pub fn try_move_actor_to(&mut self, actor_id: ActorId, new_position: IVec2) -> bool {
         let ac = self.actors.clone();
@@ -364,6 +368,7 @@ impl World {
     }
 
     pub fn try_move_actor_by(&mut self, actor_id: ActorId, delta: IVec2) -> bool {
+        info!("Trying to move actor {} by {:?}", actor_id, delta);
         let ac = self.actors.clone();
         let mut map = ac.lock().unwrap();
         let actor = map.get_mut(&actor_id).unwrap();
@@ -399,7 +404,7 @@ impl World {
                 let tile = self.map.get_tile_at_mut(pos);
 
                 let dist = (emitter.position.distance_squared(pos) as f32).sqrt();
-                info!("RELIGHT {} <=> {} dist={}", emitter.position, pos, dist);
+                // info!("RELIGHT {} <=> {} dist={}", emitter.position, pos, dist);
                 let l_intensity = if dist > 0.0 {
                     intensity / dist
                 } else {

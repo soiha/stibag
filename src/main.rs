@@ -11,6 +11,7 @@ use bevy::diagnostic::LogDiagnosticsPlugin;
 use bevy_ecs_tilemap::prelude::*;
 
 mod stibag;
+mod build;
 
 fn main() {
     println!("Hello, world!");

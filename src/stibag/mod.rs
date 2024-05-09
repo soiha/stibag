@@ -1,19 +1,48 @@
 ﻿pub mod map;
 pub mod core;
 
+use std::fs;
+use std::sync::{Arc, Mutex};
 use bevy::prelude::*;
 use bevy::input::gamepad::GamepadConnection;
 use bevy::input::gamepad::GamepadEvent;
 use bevy::app::App;
 use bevy::math::vec3;
 use bevy_ecs_tilemap::prelude::*;
+use bladeink;
+use bladeink::story_error::StoryError;
 
 const TILE_SIZE: f32 = 32.0;
 
 #[derive(Resource)]
 pub struct StibagWorldRes {
+    story: Option<Arc<Mutex<bladeink::story::Story>>>,
     world: core::World,
 }
+
+impl FromWorld for StibagWorldRes {
+    fn from_world(world: &mut World) -> Self {
+        // let as = world.get_resource::<AssetServer>().unwrap().clone();
+        let story_str = include_str!("../../assets/story.json");
+        let story = bladeink::story::Story::new(story_str);
+        if story.is_err() {
+            error!("Failed to load story: {:?}", story.as_ref().err());
+        } else {
+            info!("Story loaded");
+        }
+        let mut st_world = core::World::init();
+        let p_actor = st_world.spawn_actor_from_template("player".to_string());
+        st_world.player_possess_actor(p_actor);
+        StibagWorldRes {
+            world: st_world,
+            story: story.map_or(None, |s| Some(Arc::new(Mutex::new(s)))),
+        }
+    }
+}
+
+unsafe impl Send for StibagWorldRes {}
+
+unsafe impl Sync for StibagWorldRes {}
 
 #[derive(Component)]
 pub struct InVisionMarker;
@@ -40,8 +69,10 @@ pub struct StibagGamePlugin {}
 fn plugin_init(mut commands: Commands, asset_server: Res<AssetServer>,
                st_world: Res<StibagWorldRes>,
                mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
+               mut choice_ev: EventWriter<StoryChoiceEvent>,
                // array_texture_loader?
 ) {
+    choice_ev.send(StoryChoiceEvent("Begin".to_string()));
     let tiles_tex_handle = asset_server.load("u5_tiles.png");
     let tex_layout = TextureAtlasLayout::from_grid(Vec2::new(32.0, 32.0), 32, 16, None, None);
     let sprite_layout = texture_atlas_layouts.add(tex_layout);
@@ -250,17 +281,129 @@ fn gamepad_connections(mut commands: Commands, stibag_gamepad: Option<Res<Stibag
     }
 }
 
+#[derive(Event)]
+struct StoryTextEvent(String);
+
+#[derive(Event)]
+struct StoryChoiceEvent(String);  // something somewhere has caused a potential to select a (known) story choice by text
+
+#[derive(Event)]
+struct StoryChoiceEventWithIndex(usize); // something somewhere has caused a potential to select a story choice by index; mostly used for dialogues
+
+#[derive(Event)]
+// story output had some embedded tags. the tags_parser_sys will resolve these into events
+struct StoryTagsEvent(String, String);
+
+#[derive(Event)]
+struct ChangeMapEvent(String); // change the map to the one specified
+
+fn story_tag_handler_sys(mut commands: Commands, mut ev_tags: EventReader<StoryTagsEvent>, mut st_world: ResMut<StibagWorldRes>) {
+    for ev in ev_tags.read() {
+        let (tag, args) = (ev.0.clone(), ev.1.clone());
+        match tag.as_str() {
+            "change_map" => {
+                unimplemented!();
+            }
+            _ => {
+                error!("Unknown tag event: {:?}/{}", tag, args);
+            }
+        }
+    }
+}
+
+fn story_progression_sys(mut commands: Commands, mut st_world: ResMut<StibagWorldRes>,
+                         mut ev_story_text: EventWriter<StoryTextEvent>,
+                         mut ev_tags: EventWriter<StoryTagsEvent>,
+                         mut ev_story_choice: EventReader<StoryChoiceEvent>,
+                         mut ev_story_choice_idx: EventReader<StoryChoiceEventWithIndex>, ) {
+    let mut story = st_world.story.as_ref().unwrap().lock().unwrap();
+
+    if story.can_continue() {
+        let next = story.cont();
+        let tags = story.get_current_tags();
+        info!("Story continued");
+        if let Some(tags_vec) = tags.as_ref().ok() {
+            for tag in tags_vec.iter() {
+                if tag.contains(":") {
+                    let tag_parts: Vec<&str> = tag.split(":").collect();
+                    match tag_parts.len() {
+                        1 => {
+                            let tag_ev = StoryTagsEvent(tag_parts[0].to_string(), "".to_string());
+                            info!("Tag event with {}", tag_parts[0]);
+                            ev_tags.send(tag_ev);
+                        }
+                        2 => {
+                            let tag_ev = StoryTagsEvent(tag_parts[0].to_string(), tag_parts[1].to_string());
+                            info!("Tag event with {}/{}", tag_parts[0], tag_parts[1]);
+                            ev_tags.send(tag_ev);
+                        }
+                        _ => {
+                            error!("Tag event with invalid parts: {:?}", tag_parts);
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(ss) = next.as_ref().ok() {
+            ev_story_text.send(StoryTextEvent(ss.to_string()));
+            info!("Story continued: {:?}", ss);
+        } else {
+            error!("Failed to continue story: {:?}", next.as_ref().err());
+        }
+    } else {
+        let choices = story.get_current_choices();
+        for ev_ch in ev_story_choice.read() {
+            let ch = choices.iter().find(|c| c.text == ev_ch.0);
+            if let Some(choice) = ch {
+                let res = story.choose_choice_index(choice.index.clone().into_inner());
+                if res.is_err() {
+                    error!("Failed to choose choice: {:?}", res.as_ref().err());
+                } else {
+                    info!("Chose choice: {:?}", choice.text);
+                }
+            } else {
+                error!("Tried to select choice: {:?} but it is not available", ev_ch.0);
+            }
+        }
+
+        for ev_ch in ev_story_choice_idx.read() {
+            let ch = choices.get(ev_ch.0);
+            if let Some(choice) = ch {
+                let res = story.choose_choice_index(choice.index.clone().into_inner());
+                if res.is_err() {
+                    error!("Failed to choose choice: {:?}", res.as_ref().err());
+                } else {
+                    info!("Chose choice: {:?}", choice.text);
+                }
+            } else {
+                error!("Tried to select choice with index {:?} but it is not available", ev_ch.0);
+            }
+        }
+        /*
+        info!("Current choices:", );
+        for c in choices.iter() {
+            info!("Choice: {:?}", c.text);
+        }
+         */
+    }
+}
+
 impl Plugin for StibagGamePlugin {
     fn build(&self, app: &mut App) {
         let mut world = core::World::init();
-        let p_actor = world.spawn_actor_from_template("player".to_string());
-        world.player_possess_actor(p_actor);
+
         world.tick();
-        app.insert_resource(StibagWorldRes {
-            world,
-        });
+
+        app.init_resource::<StibagWorldRes>();
+
 
         app.add_event::<PlayerMovementEvent>();
+        app.add_event::<StoryTextEvent>();
+        app.add_event::<StoryChoiceEvent>();
+        app.add_event::<StoryChoiceEventWithIndex>();
+        app.add_event::<StoryTagsEvent>();
+
         app.add_systems(Startup, plugin_init);
         app.add_systems(Update, gamepad_connections);
         app.add_systems(Update, gamepad_input_events);
@@ -269,5 +412,7 @@ impl Plugin for StibagGamePlugin {
         app.add_systems(Update, camera_recenter_sys);
         app.add_systems(Update, reassign_vision_markers_sys.after(player_movement_sys));
         app.add_systems(Update, set_material_colors_sys.after(reassign_vision_markers_sys));
+        app.add_systems(Update, story_progression_sys);
+        app.add_systems(Update, story_tag_handler_sys.after(story_progression_sys));
     }
 }
